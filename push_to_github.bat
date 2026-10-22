@@ -12,29 +12,24 @@ set PATH=C:\Users\PC\AppData\Local\Microsoft\WinGet\Packages\Git.MinGit_Microsof
 
 echo Repozitoriy: https://github.com/guljon3004-debug/Hotira77
 echo.
-echo Iltimos, GitHub Personal Access Token (PAT) kiriting.
-echo (Token olish: https://github.com/settings/tokens)
-echo Agar token kiritmasangiz, saqlangan kalit orqali yuklanadi.
-echo.
-set /p GITHUB_TOKEN=GitHub Token (yoki to'g'ridan-to'g'ri Enter bosing): 
 
-if %GITHUB_TOKEN%==" (
- echo.
- echo Standart git push bajarilmoqda...
- git push -u origin main
-) else (
- echo.
- echo Token orqali GitHub-ga yuklanmoqda...
- git push -u https://%GITHUB_TOKEN%@github.com/guljon3004-debug/Hotira77.git main
-)
+git add -A
+git status
+echo.
+set /p COMMIT_MSG="O'zgarishlar izohi (Enter bosing): "
+if "%COMMIT_MSG%"=="" set COMMIT_MSG="Hotira77 boti to'liq qayta tiklandi va yangilandi"
+
+git commit -m "%COMMIT_MSG%"
+echo.
+echo GitHub-ga yuklanmoqda...
+git push -u origin main
 
 echo.
 if %errorlevel% equ 0 (
- echo [OK] Barcha kodlar GitHub-ga muvaffaqiyatli yuklandi!
- echo Havola: https://github.com/guljon3004-debug/Hotira77
+    echo [OK] Barcha kodlar GitHub-ga muvaffaqiyatli yuklandi!
+    echo Havola: https://github.com/guljon3004-debug/Hotira77
 ) else (
- echo [XATOLIK] Yuklashda muammo yuz berdi.
- echo Token to'g'riligi va repozitoriyga yozish huquqi borligini tekshiring.
+    echo [XATOLIK] Yuklashda muammo yuz berdi.
 )
 echo.
 pause

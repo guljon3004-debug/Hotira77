@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import re
 from datetime import datetime, timedelta
 
@@ -12,14 +13,13 @@ RU_MONTHS = {
 }
 
 def format_datetime(dt_obj: datetime, lang: str = "uz") -> str:
-    """Sanani o'zbekcha yoki ruscha chiroyli formatda qaytaradi."""
+    """Sanani chiroyli ko'rinishda qaytaradi."""
     if lang == "ru":
         month_name = RU_MONTHS.get(dt_obj.month, "")
         return f"{dt_obj.day} {month_name}, {dt_obj.strftime('%H:%M')}"
     month_name = UZ_MONTHS.get(dt_obj.month, "")
     return f"{dt_obj.day}-{month_name}, {dt_obj.strftime('%H:%M')}"
 
-# Orqaga moslik uchun
 def format_datetime_uz(dt_obj: datetime) -> str:
     return format_datetime(dt_obj, "uz")
 
@@ -28,37 +28,37 @@ def parse_reminder_time(user_input: str) -> datetime | None:
     """
     Foydalanuvchi kiritgan vaqt matnini (o'zbek yoki rus tilida) tahlil qiladi.
     Formatlar:
+    - '15 daqiqa' / '15 дақиқа' / '15 минут'
+    - '2 soat' / '2 соат' / '2 часа'
+    - '1 kun' / '1 кун' / '1 день'
+    - 'ertaga 15:30' / 'эртага 15:30' / 'завтра 15:30'
+    - 'indin 14:00' / 'индин 14:00' / 'послезавтра 14:00'
     - '15:30' / '8:00'
-    - 'ertaga 15:30' / 'завтра в 15:30' / 'завтра 9:00'
-    - 'indin 14:00' / 'послезавтра в 14:00'
-    - '15 daqiqa' / '15 минут' / '15m' / '15 min'
-    - '2 soat' / '2 часа' / '1 час' / '2h'
-    - '1 kun' / '1 день' / '2 дня'
-    - '20.10 14:00' / '2026-10-20 14:00'
+    - '25.10 14:00' / '2026-10-25 14:00'
     """
     text = user_input.strip().lower()
     now = datetime.now()
 
-    # 1. Nisbiy daqiqa: "15 daqiqa", "30 минут", "15m"
-    minute_match = re.search(r"(\d+)\s*(?:daqiqa|daq|минут[уыа]?|мин|min|m)", text)
+    # 1. Nisbiy daqiqa: "15 daqiqa", "15 дақиқа", "15 минут", "15m"
+    minute_match = re.search(r"(\d+)\s*(?:daqiqa|daq|дақиқа|дакика|мин|минут|минута|минуты|m|min)", text)
     if minute_match:
         mins = int(minute_match.group(1))
         return now + timedelta(minutes=mins)
 
-    # 2. Nisbiy soat: "2 soat", "1 час", "3 часа", "2h"
-    hour_match = re.search(r"(\d+)\s*(?:soat|st|час[аов]?|ч|h)", text)
+    # 2. Nisbiy soat: "2 soat", "2 соат", "2 часа", "1 час", "2h"
+    hour_match = re.search(r"(\d+)\s*(?:soat|st|соат|час|часа|часов|h)", text)
     if hour_match:
         hours = int(hour_match.group(1))
         return now + timedelta(hours=hours)
 
-    # 3. Nisbiy kun: "1 kun", "2 дня", "1 день"
-    day_match = re.search(r"(\d+)\s*(?:kun|день|дня|дней|day|d)", text)
+    # 3. Nisbiy kun: "1 kun", "1 кун", "1 день", "2 дня"
+    day_match = re.search(r"(\d+)\s*(?:kun|кун|день|дня|дней|day|d)", text)
     if day_match:
         days = int(day_match.group(1))
         return now + timedelta(days=days)
 
-    # 4. "ertaga 15:30", "завтра в 15:30", "zavtra 9:00"
-    if any(k in text for k in ["ertaga", "zavtra", "завтра"]):
+    # 4. "ertaga 15:30", "эртага 15:30", "завтра 15:30"
+    if any(k in text for k in ["ertaga", "эртага", "завтра", "zavtra"]):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
             hh, mm = int(time_match.group(1)), int(time_match.group(2))
@@ -66,8 +66,8 @@ def parse_reminder_time(user_input: str) -> datetime | None:
             return tomorrow.replace(hour=hh, minute=mm, second=0, microsecond=0)
         return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
 
-    # 5. "indin", "послезавтра"
-    if any(k in text for k in ["indin", "послезавтра", "poslezavtra"]):
+    # 5. "indin 14:00", "индин 14:00", "послезавtra 14:00"
+    if any(k in text for k in ["indin", "индин", "послезавтра", "poslezavtra"]):
         time_match = re.search(r"(\d{1,2}):(\d{2})", text)
         if time_match:
             hh, mm = int(time_match.group(1)), int(time_match.group(2))
