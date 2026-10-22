@@ -14,8 +14,9 @@ echo Repozitoriy: https://github.com/guljon3004-debug/Hotira77
 echo.
 echo Iltimos, GitHub Personal Access Token (PAT) kiriting.
 echo (Token olish: https://github.com/settings/tokens)
+echo Agar token kiritmasangiz, saqlangan kalit orqali yuklanadi.
 echo.
-set /p GITHUB_TOKEN=GitHub Token (yoki to'g'ridan-to'g'ri Enter): 
+set /p GITHUB_TOKEN=GitHub Token (yoki to'g'ridan-to'g'ri Enter bosing): 
 
 if %GITHUB_TOKEN%==" (
  echo.
