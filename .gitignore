@@ -1,0 +1,37 @@
+﻿# Environment variables & secrets
+.env
+*.env
+
+# SQLite & Vault databases
+*.db
+*.sqlite
+*.sqlite3
+vault.db
+
+# Storage / Personal files
+storage/
+downloads/
+
+# Local chat memory & notes (contains personal keys/tokens)
+SUHBATLAR_XOTIRASI_3_BOT.md
+SUHBAT_XULOSASI_VA_QOLLANMA.md
+scratch_summary.txt
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*.class
+
+# Temporary & Media files
+*.mp4
+*.mkv
+*.webm
+*.ogg
+*.mp3
+*.log
+*.tmp
+
+# Virtual environments
+venv/
+.venv/
+env/

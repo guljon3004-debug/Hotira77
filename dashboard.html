@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Office · Boshqaruv Paneli</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #F4EFE6;
+      --bg-surface: #FAF7F2;
+      --bg-card: #FFFFFF;
+      --border-color: #D8CEBF;
+      --border-subtle: #E8E0D5;
+      --text-primary: #38281D;
+      --text-secondary: #6E5746;
+      --text-muted: #9E8978;
+      --accent-brown: #523826;
+      --accent-caramel: #AC7A4E;
+      --accent-caramel-light: #F2E8DC;
+      --accent-success: #4E6B4E;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+      line-height: 1.5;
+      padding: 24px 16px;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Header */
+    .header {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--text-primary);
+    }
+
+    .brand-sub {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    .live-badge {
+      background: var(--accent-caramel-light);
+      color: var(--accent-brown);
+      border: 1px solid var(--border-color);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Status Card */
+    .status-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 4px 16px rgba(56, 40, 29, 0.04);
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    .metric-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .metric-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .metric-val {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--accent-brown);
+      margin-top: 4px;
+      letter-spacing: -0.5px;
+    }
+
+    .action-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .btn {
+      appearance: none;
+      border: none;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s ease;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background: var(--accent-brown);
+      color: #FFFFFF;
+    }
+
+    .btn-primary:hover {
+      background: #2A1B11;
+      transform: translateY(-1px);
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1.5px solid var(--border-color);
+      color: var(--text-primary);
+    }
+
+    .btn-outline:hover {
+      background: var(--bg-surface);
+    }
+
+    /* Tabs / Lists */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 20px;
+    }
+
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .list-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .item-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .item-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .item-tag {
+      font-size: 11px;
+      background: var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-weight: 500;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div>
+        <div class="brand-title">Smart Office</div>
+        <div class="brand-sub">Shaxsiy Davomat va Hujjatlar</div>
+      </div>
+      <div class="live-badge" id="liveClock">00:00:00</div>
+    </header>
+
+    <!-- Attendance Card -->
+    <section class="status-card">
+      <div class="section-label">Bugungi Ish Vaqti</div>
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <div class="metric-title">Kelish Vaqti</div>
+          <div class="metric-val" id="checkInVal">--:--</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-title">Ketish Vaqti</div>
+          <div class="metric-val" id="checkOutVal">--:--</div>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-primary" onclick="triggerAction('in')">Keldim</button>
+        <button class="btn btn-outline" onclick="triggerAction('out')">Ketdim</button>
+      </div>
+    </section>
+
+    <!-- Monthly Summary -->
+    <section class="card">
+      <div class="section-label">Oylik Hisobot Xulosasi</div>
+      <div class="list-item">
+        <div>
+          <div class="item-name">Ishlangan Kunlar</div>
+          <div class="item-sub">Joriy oy bo'yicha</div>
+        </div>
+        <div class="item-tag" id="totalDaysVal">- kun</div>
+      </div>
+      <div class="list-item">
+        <div>
+          <div class="item-name">Jami Ish Vaqti</div>
+          <div class="item-sub">Umumiy soatlar</div>
+        </div>
+        <div class="item-tag" id="totalHoursVal">- soat</div>
+      </div>
+      <div class="list-item">
+        <div>
+          <div class="item-name">O'rtacha Kunlik</div>
+          <div class="item-sub">Kuniga o'rtacha</div>
+        </div>
+        <div class="item-tag" id="avgHoursVal">- soat</div>
+      </div>
+    </section>
+
+    <!-- Info -->
+    <div class="footer-note">
+      Minimalistik dizayn · Bej va jigarrang palitra
+    </div>
+  </div>
+
+  <script>
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('liveClock').textContent = now.toLocaleTimeString('uz-UZ');
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    async function loadData() {
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.today) {
+            document.getElementById('checkInVal').textContent = (data.today.check_in_time || '--:--').slice(0, 5);
+            document.getElementById('checkOutVal').textContent = (data.today.check_out_time || '--:--').slice(0, 5);
+          }
+          if (data.summary) {
+            document.getElementById('totalDaysVal').textContent = data.summary.total_days + ' kun';
+            document.getElementById('totalHoursVal').textContent = data.summary.total_hours + ' soat ' + data.summary.remaining_mins + ' daq';
+            document.getElementById('avgHoursVal').textContent = data.summary.avg_hours + ' soat ' + data.summary.avg_mins + ' daq';
+          }
+        }
+      } catch (e) {
+        console.log('Ma\'lumot yuklashda:', e);
+      }
+    }
+    loadData();
+
+    async function triggerAction(action) {
+      try {
+        const res = await fetch(`/wifi?action=${action}`);
+        const data = await res.json();
+        alert(action === 'in' ? 'Kelish qayd etildi.' : 'Ketish qayd etildi.');
+        loadData();
+      } catch (e) {
+        alert('Xatolik yuz berdi');
+      }
+    }
+  </script>
+</body>
+</html>
