@@ -81,9 +81,14 @@ from location_service import (
 )
 
 # Log sozlamalari
+log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_debug.log")
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_file, encoding="utf-8", mode="a")
+    ]
 )
 logger = logging.getLogger("Hotira77")
 
@@ -1085,3 +1090,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot to'xtatildi.")
+    except Exception as e:
+        logger.exception("BOT KUTILMAGAN XATOLIK BILAN TO'XTADI:")
