@@ -295,63 +295,66 @@ def get_monthly_attendance(user_id: int, year: int = None, month: int = None) ->
 # DOCUMENTS (HUJJATLAR ARXIVI)
 # ==========================================
 
-def add_document(user_id: int, file_id: str, file_unique_id: str,
-                 file_name: str, file_size: int = 0, file_ext: str = "",
-                 caption: str = "") -> int:
-    """Rasmiy hujjatni saqlaydi."""
+def add_document(user_id: int, file_id: str = "", file_unique_id: str = "",
+                 file_name: str = "", file_size: int = 0, file_ext: str = "",
+                 caption: str = "", file_type: str = "document", file_path: str = "") -> int:
+    """Rasmiy hujjat yoki xotirani saqlaydi (ham documents, ham vault_items ga)."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO documents (user_id, file_id, file_unique_id, file_name, file_size, file_ext, caption)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, file_id, file_unique_id, file_name, file_size, file_ext or file_type, caption))
+            conn.commit()
+    except Exception:
+        pass
+
+    return add_vault_item(
+        user_id=user_id,
+        item_type=file_type or "document",
+        file_id=file_id,
+        file_unique_id=file_unique_id,
+        file_name=file_name,
+        file_size=file_size,
+        caption=caption,
+        category="documents" if file_type == "document" else (file_type + "s"),
+        local_path=file_path
+    )
+
+
+def get_documents(user_id: int, search_query: str = None, page: int = 1, per_page: int = 25) -> list:
+    """Barcha xotiralar va fayllar ro'yxatini to'g'ridan-to'g'ri list qilib beradi."""
+    items, _ = get_vault_items(user_id=user_id, page=page, per_page=per_page, search_query=search_query)
+    return items
+
+
+def get_document(doc_id: int, user_id: int = None) -> dict | None:
+    """Bitta hujjat yoki xotira ma'lumotini oladi."""
+    item = get_vault_item(doc_id, user_id)
+    if item:
+        return item
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-        INSERT INTO documents (user_id, file_id, file_unique_id, file_name, file_size, file_ext, caption)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, file_id, file_unique_id, file_name, file_size, file_ext, caption))
-        conn.commit()
-        return cursor.lastrowid
-
-
-def get_documents(user_id: int, search_query: str = None, page: int = 1, per_page: int = 5) -> tuple[list, int]:
-    """Hujjatlar ro'yxatini sahifalab beradi."""
-    conditions = ["user_id = ?"]
-    params = [user_id]
-
-    if search_query:
-        conditions.append("(file_name LIKE ? OR caption LIKE ?)")
-        params.extend([f"%{search_query}%", f"%{search_query}%"])
-
-    where_sql = " AND ".join(conditions)
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"SELECT COUNT(*) FROM documents WHERE {where_sql}", params)
-        total_count = cursor.fetchone()[0]
-
-        offset = (page - 1) * per_page
-        cursor.execute(f"""
-        SELECT * FROM documents 
-        WHERE {where_sql} 
-        ORDER BY id DESC 
-        LIMIT ? OFFSET ?
-        """, params + [per_page, offset])
-        rows = [dict(r) for r in cursor.fetchall()]
-        return rows, total_count
-
-
-def get_document(doc_id: int, user_id: int) -> dict | None:
-    """Bitta hujjat ma'lumotini oladi."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+        if user_id:
+            cursor.execute("SELECT * FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+        else:
+            cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
 
-def delete_document(doc_id: int, user_id: int) -> bool:
-    """Hujjatni o'chiradi."""
+def delete_document(doc_id: int, user_id: int = None) -> bool:
+    """Hujjat yoki xotirani o'chiradi."""
+    del_vault = delete_vault_item(doc_id, user_id)
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+        if user_id:
+            cursor.execute("DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+        else:
+            cursor.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
         conn.commit()
-        return cursor.rowcount > 0
+        return del_vault or (cursor.rowcount > 0)
 
 
 # ==========================================
@@ -385,20 +388,26 @@ def add_vault_item(user_id: int, item_type: str, file_id: str = None,
         return cursor.lastrowid
 
 
-def get_vault_item(item_id: int, user_id: int):
+def get_vault_item(item_id: int, user_id: int = None):
     """Bitta elementni ID bo'yicha oladi."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM vault_items WHERE id = ? AND user_id = ?", (item_id, user_id))
+        if user_id:
+            cursor.execute("SELECT * FROM vault_items WHERE id = ? AND user_id = ?", (item_id, user_id))
+        else:
+            cursor.execute("SELECT * FROM vault_items WHERE id = ?", (item_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
 
-def delete_vault_item(item_id: int, user_id: int) -> bool:
+def delete_vault_item(item_id: int, user_id: int = None) -> bool:
     """Elementni o'chiradi."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM vault_items WHERE id = ? AND user_id = ?", (item_id, user_id))
+        if user_id:
+            cursor.execute("DELETE FROM vault_items WHERE id = ? AND user_id = ?", (item_id, user_id))
+        else:
+            cursor.execute("DELETE FROM vault_items WHERE id = ?", (item_id,))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -592,11 +601,14 @@ def get_user_reminders(user_id: int, show_completed: bool = False, limit: int = 
         return [dict(r) for r in cursor.fetchall()]
 
 
-def delete_reminder(reminder_id: int, user_id: int) -> bool:
+def delete_reminder(reminder_id: int, user_id: int = None) -> bool:
     """Eslatmani butunlay o'chiradi."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM reminders WHERE id = ? AND user_id = ?", (reminder_id, user_id))
+        if user_id:
+            cursor.execute("DELETE FROM reminders WHERE id = ? AND user_id = ?", (reminder_id, user_id))
+        else:
+            cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -693,14 +705,15 @@ def get_authorized_users() -> list[dict]:
         return [dict(r) for r in cursor.fetchall()]
 
 
-def log_security_incident(user_id: int, full_name: str, username: str, message_text: str):
+def log_security_incident(user_id: int, full_name: str = "", username: str = "", message_text: str = "", action_attempted: str = "", details: str = ""):
     """Begona foydalanuvchining kirish urinishini qayd etadi."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        msg = message_text or details or action_attempted or "Kirish urinishi"
         cursor.execute("""
         INSERT INTO security_logs (user_id, full_name, username, message_text)
         VALUES (?, ?, ?, ?)
-        """, (user_id, full_name, username or "", (message_text or "")[:500]))
+        """, (user_id, full_name or "", username or "", (msg or "")[:500]))
         conn.commit()
 
 

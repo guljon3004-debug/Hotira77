@@ -94,23 +94,37 @@ def get_reminder_alert_kb(reminder_id: int, lang: str = "uz") -> InlineKeyboardM
 
 
 def get_documents_inline_kb(docs: list, lang: str = "uz") -> InlineKeyboardMarkup:
-    """Saqlangan hujjatlar ro'yxati."""
+    """Saqlangan xotiralar va hujjatlar ro'yxati."""
     buttons = []
-    for d in docs[:15]:
+    type_icons = {
+        "photo": "🖼",
+        "video": "🎥",
+        "audio": "🎵",
+        "voice": "🎙",
+        "document": "📄",
+        "note": "📝"
+    }
+    for d in docs[:25]:
         d_id = d["id"]
-        fname = d["file_name"] if len(d["file_name"]) <= 25 else d["file_name"][:22] + "..."
+        itype = d.get("item_type", "document")
+        icon = type_icons.get(itype, "📁")
+        caption = (d.get("caption") or "").strip()
+        fname = (d.get("file_name") or "").strip()
+        display_name = caption if caption else (fname if fname else f"Fayl #{d_id}")
+        if len(display_name) > 28:
+            display_name = display_name[:25] + "..."
         buttons.append([
-            InlineKeyboardButton(text=f"📄 {fname}", callback_data=f"doc_view:{d_id}")
+            InlineKeyboardButton(text=f"{icon} {display_name}", callback_data=f"doc_view:{d_id}")
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def get_document_single_kb(doc_id: int, lang: str = "uz") -> InlineKeyboardMarkup:
-    """Bitta hujjat amallari."""
+    """Bitta hujjat yoki xotira amallari."""
     buttons = [
         [
-            InlineKeyboardButton(text=tr("btn_download", lang), callback_data=f"doc_get:{doc_id}"),
-            InlineKeyboardButton(text=tr("btn_delete", lang), callback_data=f"doc_del_ask:{doc_id}")
+            InlineKeyboardButton(text="📥 Ochish / Yuklash", callback_data=f"doc_get:{doc_id}"),
+            InlineKeyboardButton(text="🗑 " + tr("btn_delete", lang), callback_data=f"doc_del_ask:{doc_id}")
         ],
         [
             InlineKeyboardButton(text="◀️ " + tr("btn_back_main", lang), callback_data="doc_list")

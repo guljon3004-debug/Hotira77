@@ -563,9 +563,9 @@ async def cb_rem_snooze(call: types.CallbackQuery):
 # 📁 SHAXSIY SEYF VA HUJJATLAR (DOCUMENTS)
 # ==========================================
 
-@dp.message(F.text.func(lambda t: bool(t and ("Shaxsiy Seyf" in t or "Личный Сейф" in t or "Hujjatlar" in t))))
+@dp.message(F.text.func(lambda t: bool(t and ("Shaxsiy Seyf" in t or "Личный Сейф" in t or "Hujjatlar" in t or "Xotiralar" in t or t == "/seyf" or t == "/xotira"))))
 async def handle_documents_button(message: types.Message):
-    """Shaxsiy Seyfdagi fayllarni ko'rsatish."""
+    """Shaxsiy Seyfdagi barcha fayl va xotiralarni ko'rsatish."""
     if not await is_authorized(message):
         return
     user_id = message.from_user.id
@@ -588,7 +588,7 @@ async def handle_documents_button(message: types.Message):
 
 @dp.callback_query(F.data == "doc_list")
 async def cb_doc_list(call: types.CallbackQuery):
-    """Hujjatlar ro'yxatiga qaytish."""
+    """Hujjatlar va xotiralar ro'yxatiga qaytish."""
     if not await is_authorized(call):
         return
     user_id = call.from_user.id
@@ -604,24 +604,47 @@ async def cb_doc_list(call: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("doc_view:"))
 async def cb_doc_view(call: types.CallbackQuery):
-    """Bitta hujjat ma'lumotlarini ko'rish."""
+    """Bitta xotira/hujjat ma'lumotlarini ko'rish."""
     if not await is_authorized(call):
         return
     user_id = call.from_user.id
     lang = get_user_lang(user_id)
     d_id = int(call.data.split(":")[1])
-    doc = get_document(d_id)
+    doc = get_document(d_id, user_id)
     if not doc:
         await call.answer("Fayl topilmadi", show_alert=True)
         return
 
-    size_kb = f"{doc['file_size'] / 1024:.1f} KB" if doc.get('file_size') else "Noma'lum"
-    text = (
-        f"📄 <b>HUJJAT MA'LUMOTI</b>\n\n"
-        f"🏷 Nomi: <code>{doc['file_name']}</code>\n"
-        f"📦 Hajmi: {size_kb}\n"
-        f"📅 Saqlangan vaqt: <code>{doc.get('uploaded_at', '')}</code>"
-    )
+    type_names = {
+        "photo": "🖼 Rasm",
+        "video": "🎥 Video",
+        "audio": "🎵 Audio",
+        "voice": "🎙 Ovozli xabar",
+        "document": "📄 Hujjat",
+        "note": "📝 Qayd"
+    }
+    t_name = type_names.get(doc.get("item_type"), "📁 Fayl")
+    size_bytes = doc.get("file_size") or 0
+    if size_bytes >= 1024 * 1024:
+        size_str = f"{size_bytes / (1024*1024):.1f} MB"
+    elif size_bytes > 0:
+        size_str = f"{size_bytes / 1024:.1f} KB"
+    else:
+        size_str = "Noma'lum"
+
+    created = doc.get("created_at") or ""
+    caption = (doc.get("caption") or "").strip()
+    fname = (doc.get("file_name") or "").strip()
+
+    text = "<b>📁 XOTIRA / FAYL MA'LUMOTI</b>\n\n🏷 Turi: <b>" + str(t_name) + "</b>\n"
+    if fname:
+        text += f"📄 Nomi: <code>{fname}</code>\n"
+    if caption:
+        text += f"📝 Izoh: <i>{caption}</i>\n"
+    text += f"📦 Hajmi: {size_str}\n"
+    if created:
+        text += f"📅 Saqlangan: <code>{created}</code>\n"
+
     await call.message.edit_text(
         text,
         parse_mode="HTML",
@@ -632,34 +655,52 @@ async def cb_doc_view(call: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("doc_get:"))
 async def cb_doc_download(call: types.CallbackQuery):
-    """Faylni foydalanuvchiga qayta yuborish."""
+    """Fayl yoki xotirani foydalanuvchiga qayta yuborish."""
     if not await is_authorized(call):
         return
+    user_id = call.from_user.id
     d_id = int(call.data.split(":")[1])
-    doc = get_document(d_id)
+    doc = get_document(d_id, user_id)
     if not doc:
         await call.answer("Fayl topilmadi", show_alert=True)
         return
 
-    file_path = doc.get("file_path")
-    if file_path and os.path.exists(file_path):
-        await call.message.answer_document(
-            document=FSInputFile(file_path, filename=doc["file_name"]),
-            caption=f"📁 <i>{doc['file_name']}</i>",
-            parse_mode="HTML"
-        )
-        await call.answer("Fayl yuborildi")
-    else:
-        # Agar lokal yo'q bo'lsa, Telegram file_id orqali yuborish
-        try:
-            await call.message.answer_document(
-                document=doc["file_id"],
-                caption=f"📁 <i>{doc['file_name']}</i>",
-                parse_mode="HTML"
-            )
-            await call.answer("Fayl yuborildi")
-        except Exception as e:
-            await call.answer(f"Faylni ochishda xatolik: {e}", show_alert=True)
+    item_type = doc.get("item_type", "document")
+    caption = doc.get("caption") or doc.get("file_name") or ""
+    file_path = doc.get("local_path")
+    file_id = doc.get("file_id")
+
+    has_local = bool(file_path and os.path.exists(file_path))
+
+    try:
+        if item_type == "photo":
+            if has_local:
+                await call.message.answer_photo(photo=FSInputFile(file_path), caption=caption)
+            elif file_id:
+                await call.message.answer_photo(photo=file_id, caption=caption)
+        elif item_type == "video":
+            if has_local:
+                await call.message.answer_video(video=FSInputFile(file_path), caption=caption)
+            elif file_id:
+                await call.message.answer_video(video=file_id, caption=caption)
+        elif item_type in ("audio", "voice"):
+            if has_local:
+                await call.message.answer_audio(audio=FSInputFile(file_path), caption=caption)
+            elif file_id:
+                await call.message.answer_audio(audio=file_id, caption=caption)
+        elif item_type == "note":
+            await call.message.answer("📝 <b>Qayd:</b>\n\n" + str(caption), parse_mode="HTML")
+
+        else:  # document
+            fname = doc.get("file_name") or "document"
+            if has_local:
+                await call.message.answer_document(document=FSInputFile(file_path, filename=fname), caption=caption)
+            elif file_id:
+                await call.message.answer_document(document=file_id, caption=caption)
+        await call.answer("Yuborildi")
+    except Exception as e:
+        logger.error("Fayl jo'natishda xatolik: %s", e)
+        await call.answer(f"Xatolik: {e}", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("doc_del_ask:"))
@@ -680,19 +721,19 @@ async def cb_doc_del_ask(call: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("doc_del_confirm:"))
 async def cb_doc_del_confirm(call: types.CallbackQuery):
-    """Hujjatni o'chirish."""
+    """Xotira/hujjatni o'chirish."""
     if not await is_authorized(call):
         return
     user_id = call.from_user.id
     lang = get_user_lang(user_id)
     d_id = int(call.data.split(":")[1])
-    doc = get_document(d_id)
-    if doc and doc.get("file_path") and os.path.exists(doc["file_path"]):
+    doc = get_document(d_id, user_id)
+    if doc and doc.get("local_path") and os.path.exists(doc["local_path"]):
         try:
-            os.remove(doc["file_path"])
+            os.remove(doc["local_path"])
         except Exception:
             pass
-    delete_document(d_id)
+    delete_document(d_id, user_id)
 
     docs = get_documents(user_id)
     await call.message.edit_text(
@@ -705,48 +746,61 @@ async def cb_doc_del_confirm(call: types.CallbackQuery):
 
 @dp.message(F.document | F.photo | F.video | F.audio)
 async def handle_incoming_file(message: types.Message):
-    """Har qanday yuborilgan faylni Seyfga saqlash."""
+    """Har qanday yuborilgan faylni (rasm, video, audio, hujjat) Seyfga saqlash."""
     if not await is_authorized(message):
         return
 
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
-    os.makedirs("storage", exist_ok=True)
+    caption = (message.caption or "").strip()
 
     file_id = None
+    file_unique_id = ""
     file_name = "fayl"
     file_size = 0
     file_type = "document"
+    folder = "documents"
 
     if message.document:
         doc = message.document
         file_id = doc.file_id
+        file_unique_id = doc.file_unique_id or ""
         file_name = doc.file_name or f"doc_{int(datetime.now().timestamp())}"
         file_size = doc.file_size or 0
         file_type = "document"
+        folder = "documents"
     elif message.photo:
         p = message.photo[-1]
         file_id = p.file_id
+        file_unique_id = p.file_unique_id or ""
         file_name = f"photo_{int(datetime.now().timestamp())}.jpg"
         file_size = p.file_size or 0
         file_type = "photo"
+        folder = "photos"
     elif message.video:
         v = message.video
         file_id = v.file_id
+        file_unique_id = v.file_unique_id or ""
         file_name = v.file_name or f"video_{int(datetime.now().timestamp())}.mp4"
         file_size = v.file_size or 0
         file_type = "video"
+        folder = "videos"
     elif message.audio:
         a = message.audio
         file_id = a.file_id
+        file_unique_id = a.file_unique_id or ""
         file_name = a.file_name or f"audio_{int(datetime.now().timestamp())}.mp3"
         file_size = a.file_size or 0
         file_type = "audio"
+        folder = "audios"
 
     if not file_id:
         return
 
-    local_path = os.path.join("storage", f"{uuid.uuid4().hex[:8]}_{file_name}")
+    save_dir = os.path.join("storage", folder)
+    os.makedirs(save_dir, exist_ok=True)
+    local_path = os.path.join(save_dir, f"{uuid.uuid4().hex[:8]}_{file_name}")
+
     try:
         f_info = await bot.get_file(file_id)
         await bot.download_file(f_info.file_path, destination=local_path)
@@ -757,13 +811,15 @@ async def handle_incoming_file(message: types.Message):
     add_document(
         user_id=user_id,
         file_id=file_id,
+        file_unique_id=file_unique_id,
         file_name=file_name,
         file_size=file_size,
         file_type=file_type,
-        file_path=local_path
+        file_path=local_path,
+        caption=caption
     )
 
-    size_str = f"{file_size / 1024:.1f} KB" if file_size else "Noma'lum"
+    size_str = f"{file_size / (1024*1024):.1f} MB" if file_size >= 1024*1024 else f"{file_size / 1024:.1f} KB"
     confirm_msg = tr("doc_saved", lang, name=file_name, size=size_str, type=file_type)
     await message.answer(confirm_msg, parse_mode="HTML", reply_markup=get_main_keyboard(lang))
 
