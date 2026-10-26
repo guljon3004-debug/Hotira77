@@ -5,7 +5,10 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vault.db")
+# DATA_DIR berilsa (masalan Railway volume: /data) baza o'sha yerda saqlanadi
+DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "vault.db")
 
 
 def get_connection():

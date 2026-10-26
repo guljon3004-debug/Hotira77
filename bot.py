@@ -807,7 +807,7 @@ async def handle_incoming_file(message: types.Message):
     if not file_id:
         return
 
-    save_dir = os.path.join("storage", folder)
+    save_dir = os.path.join(os.getenv("DATA_DIR", "."), "storage", folder)
     os.makedirs(save_dir, exist_ok=True)
     local_path = os.path.join(save_dir, f"{uuid.uuid4().hex[:8]}_{file_name}")
 
