@@ -958,44 +958,68 @@ async def handle_voice_message(message: types.Message):
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
 
-    await bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
-
     os.makedirs("downloads", exist_ok=True)
     voice_path = os.path.join("downloads", f"voice_{user_id}_{message.voice.file_id[:8]}.ogg")
+
+    # Javob tayyor bo'lguncha "yozmoqda..." belgisini doimiy yangilab turamiz
+    # (Telegram uni 5 soniyadan keyin o'chiradi, foydalanuvchi bot qotib qoldi deb o'ylamasin)
+    async def keep_typing():
+        while True:
+            try:
+                await bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(keep_typing())
     try:
-        f_info = await bot.get_file(message.voice.file_id)
-        await bot.download_file(f_info.file_path, destination=voice_path)
-        with open(voice_path, "rb") as vf:
-            audio_bytes = vf.read()
-    except Exception as e:
-        logger.error("Ovozli faylni yuklab olishda xatolik: %s", e)
-        await message.answer("Ovozli xabarni qabul qilishda xatolik yuz berdi.")
-        return
+        try:
+            f_info = await bot.get_file(message.voice.file_id)
+            await bot.download_file(f_info.file_path, destination=voice_path)
+            with open(voice_path, "rb") as vf:
+                audio_bytes = vf.read()
+        except Exception as e:
+            logger.error("Ovozli faylni yuklab olishda xatolik: %s", e)
+            await message.answer("Ovozli xabarni qabul qilishda xatolik yuz berdi.")
+            return
+        finally:
+            try:
+                os.remove(voice_path)
+            except OSError:
+                pass
 
-    global http_session
-    if not http_session or http_session.closed:
-        http_session = aiohttp.ClientSession()
+        global http_session
+        if not http_session or http_session.closed:
+            http_session = aiohttp.ClientSession()
 
-    loc_info = get_user_current_location(user_id)
-    ai_answer = await gemini_service.ask_audio(
-        user_id=user_id,
-        audio_bytes=audio_bytes,
-        mime_type="audio/ogg",
-        session=http_session,
-        location_info=loc_info
-    )
-
-    # Javobni ovozli qilib jo'natamiz
-    tts_audio = await generate_voice_message(ai_answer)
-    if tts_audio and os.path.exists(tts_audio):
-        await message.answer_voice(
-            voice=FSInputFile(tts_audio),
-            caption=f"🎙 <i>{ai_answer[:200]}</i>",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard(lang)
+        loc_info = get_user_current_location(user_id)
+        ai_answer = await gemini_service.ask_audio(
+            user_id=user_id,
+            audio_bytes=audio_bytes,
+            mime_type="audio/ogg",
+            session=http_session,
+            location_info=loc_info
         )
-    else:
-        await message.answer(ai_answer, parse_mode="HTML", reply_markup=get_main_keyboard(lang))
+
+        # 1) Matnli javobni DARHOL yuboramiz, ovoz tayyorlanishini kutdirmaymiz
+        try:
+            await message.answer(ai_answer, parse_mode="HTML", reply_markup=get_main_keyboard(lang))
+        except TelegramBadRequest:
+            # AI matnida HTML ga to'g'ri kelmaydigan belgi bo'lsa, oddiy matn qilib yuboramiz
+            await message.answer(ai_answer, parse_mode=None, reply_markup=get_main_keyboard(lang))
+
+        # 2) Ovozli variantini tayyorlab, ortidan yuboramiz
+        tts_audio = await generate_voice_message(ai_answer)
+        if tts_audio and os.path.exists(tts_audio):
+            try:
+                await message.answer_voice(voice=FSInputFile(tts_audio))
+            finally:
+                try:
+                    os.remove(tts_audio)
+                except OSError:
+                    pass
+    finally:
+        typing_task.cancel()
 
 
 @dp.message(F.text)

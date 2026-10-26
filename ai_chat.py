@@ -1,5 +1,6 @@
 import os
 import asyncio
+import time
 import logging
 import aiohttp
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,9 @@ SYSTEM_PROMPT = (
     "Kerakli o'rinlarda emojilardan foydalaning, ro'yxatlar va muhim fikrlarni chiroyli ajratib ko'rsating."
 )
 
+
+ATTEMPT_TIMEOUT = 20   # bitta modelni kutish (soniya)
+MODEL_COOLDOWN = 300   # band chiqqan modelni shuncha soniya oxirga suramiz
 
 # O'zbekiston vaqti (UTC+5, yozgi/qishki vaqtga o'tish yo'q)
 UZ_TZ = timezone(timedelta(hours=5))
@@ -66,6 +70,8 @@ class GeminiChatService:
         # Tarixda saqlanadigan maksimal xabarlar soni
         self.max_history_turns = 10
         self.fallback_models = ["gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-flash-latest"]
+        # model -> shu vaqtgacha (time.monotonic) band deb hisoblanadi
+        self._bad_until: dict[str, float] = {}
 
     def is_configured(self) -> bool:
         """API kaliti sozlanganligini tekshiradi."""
@@ -84,19 +90,30 @@ class GeminiChatService:
     async def _generate(self, session: aiohttp.ClientSession, payload: dict, total_timeout: int) -> tuple[int, dict]:
         """
         Gemini'ga so'rov yuboradi. Model band bo'lsa (429/500/503/504 yoki timeout)
-        zaxira modellarga navbat bilan o'tadi. (status, javob) qaytaradi.
+        zaxira modellarga o'tadi. Band chiqqan model 5 daqiqa oxiriga suriladi, shunda har
+        so'rovda band modelga vaqt yo'qotilmaydi. (status, javob) qaytaradi.
         """
         api_key = self.get_api_key()
         models = []
         for m in [self.get_model(), *self.fallback_models]:
             if m and m not in models:
                 models.append(m)
+        now = time.monotonic()
+        # Yaqinda band chiqqan modellar oxirga (tartib saqlanadi)
+        models.sort(key=lambda m: self._bad_until.get(m, 0) > now)
 
+        deadline = now + total_timeout
         status, data = 0, {}
         for i, model in enumerate(models):
+            remaining = deadline - time.monotonic()
+            if remaining <= 1 and i > 0:
+                break
+            # Bitta urinish uzog'i bilan 20 soniya: band modelni uzoq kutmaymiz
+            attempt_timeout = max(2, min(ATTEMPT_TIMEOUT, remaining))
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            t0 = time.monotonic()
             try:
-                timeout = aiohttp.ClientTimeout(total=total_timeout)
+                timeout = aiohttp.ClientTimeout(total=attempt_timeout)
                 async with session.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout) as resp:
                     status = resp.status
                     data = await resp.json(content_type=None)
@@ -106,9 +123,10 @@ class GeminiChatService:
                 raise
 
             if status not in (429, 500, 503, 504) and not (status == 404 and i > 0):
+                logger.info("Gemini [%s]: HTTP %s, %.1f s", model, status, time.monotonic() - t0)
                 return status, data
-            logger.warning(f"Gemini [{model}] band ({status}), keyingi modelga o'tilmoqda...")
-            await asyncio.sleep(1)
+            self._bad_until[model] = time.monotonic() + MODEL_COOLDOWN
+            logger.warning("Gemini [%s] band (%s, %.1f s), keyingi modelga o'tilmoqda...", model, status, time.monotonic() - t0)
         return status, data
 
     def clear_history(self, user_id: int):
