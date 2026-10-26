@@ -351,12 +351,24 @@ async def handle_location_update(message: types.Message):
         http_session = aiohttp.ClientSession()
 
     addr = await resolve_address(lat, lon, http_session)
+    if not addr:
+        # Manzilni aniqlab bo'lmadi: eski holatni buzmaymiz, keyingi yangilanishda qayta uriniladi
+        logger.warning("Joylashuv [user: %s] %.5f, %.5f: manzil aniqlanmadi", user_id, lat, lon)
+        if not prev:
+            await message.answer(
+                "📍 Joylashuvingiz qabul qilindi, lekin ko'cha nomini hozircha aniqlab bo'lmadi. "
+                "Harakatlansangiz, qayta urinib ko'raman.",
+                reply_markup=get_main_keyboard(lang)
+            )
+            update_user_location(user_id, lat, lon, {"road": "", "district": "", "city": ""}, is_live=bool(getattr(loc, 'live_period', None)))
+        return
     old_road = prev.get("road") if prev else None
     new_road = addr.get("road")
     district = addr.get("district") or addr.get("city") or "Toshkent"
     time_str = datetime.now().strftime("%H:%M:%S")
 
     is_live = bool(getattr(loc, 'live_period', None))
+    logger.info("Joylashuv [user: %s, live: %s]: %s (%s -> %s)", user_id, is_live, new_road, old_road, new_road)
 
     # Ko'cha o'zgarishini tekshirish
     if old_road and new_road and old_road.lower() != new_road.lower() and new_road.lower() != "aniqlanmoqda":
