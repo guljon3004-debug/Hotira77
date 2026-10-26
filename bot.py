@@ -58,7 +58,7 @@ from database import (
     get_state,
     set_state
 )
-from rates_service import fetch_usd_rate, fetch_rate, format_usd_rate, format_rate, detect_rate_request, uz_now
+from rates_service import fetch_usd_rate, fetch_rate, format_usd_rate, format_rate, detect_rate_request, selfcheck, uz_now
 from reminder_helper import parse_reminder_time, format_datetime
 from keyboards import (
     get_main_keyboard,
@@ -214,7 +214,7 @@ async def reminders_worker():
 # ==========================================
 
 RATE_SEND_HOUR = 8       # soat 08:00 da yuboriladi
-RATE_CATCHUP_UNTIL = 12  # bot 08:00 da o'chiq bo'lsa, 12:00 gacha kechikib yuboriladi
+RATE_CATCHUP_UNTIL = 20  # rasmiy kurs 08:00 da olinmasa (sayt ochilmasa), 20:00 gacha har 5 daqiqada qayta uriniladi
 
 
 def get_rate_kb(user_id: int, lang: str = "uz") -> InlineKeyboardMarkup:
@@ -240,8 +240,8 @@ async def cmd_rate(message: types.Message):
 
     info = await fetch_usd_rate(http_session)
     if not info:
-        await message.answer("⚠️ Kursni hozircha olib bo'lmadi. Birozdan keyin qayta urinib ko'ring." if lang != "ru"
-                             else "⚠️ Не удалось получить курс. Попробуйте позже.")
+        await message.answer("⚠️ Markaziy bank sayti hozir javob bermayapti, rasmiy kursni olib bo'lmadi. Birozdan keyin qayta urinib ko'ring." if lang != "ru"
+                             else "⚠️ Сайт ЦБ сейчас не отвечает, официальный курс получить не удалось. Попробуйте позже.")
         return
     await message.answer(format_usd_rate(info, lang), parse_mode="HTML", reply_markup=get_rate_kb(user_id, lang))
 
@@ -1160,7 +1160,12 @@ async def handle_text_messages(message: types.Message):
             await message.answer("\n\n".join(format_rate(i, lang) for i in infos), parse_mode="HTML",
                                  reply_markup=get_rate_kb(user_id, lang))
             return
-        # Markaziy bank javob bermasa, AI ga o'tib ketamiz (u hech bo'lmasa tushuntirib beradi)
+        # Markaziy bank javob bermasa, taxminiy kurs bermaymiz va AI ga ham o'tkazmaymiz (u o'zidan to'qib yuboradi)
+        await message.answer(
+            "⚠️ Markaziy bank sayti hozir javob bermayapti, rasmiy kursni olib bo'lmadi. Birozdan keyin qayta urinib ko'ring."
+            if lang != "ru" else
+            "⚠️ Сайт ЦБ сейчас не отвечает, официальный курс получить не удалось. Попробуйте позже.")
+        return
 
     # 4. Doimiy Gemini AI Chat
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
@@ -1205,6 +1210,7 @@ async def main():
     if str(ADMIN_ID or "").strip().isdigit():
         ensure_rate_subscribed_default(int(ADMIN_ID))
     asyncio.create_task(rates_worker())
+    asyncio.create_task(selfcheck(http_session))
 
     logger.info("Hotira77 boti muvaffaqiyatli ishga tushdi (@Hotira77_bot). Xabarlar kutilmoqda...")
 

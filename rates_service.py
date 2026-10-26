@@ -12,12 +12,8 @@ UZ_TZ = timezone(timedelta(hours=5))
 # Markaziy bank rasmiy kurslari (bepul, kalitsiz)
 CBU_URL = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/{code}/"
 
-# Zaxira manba: cbu.uz chet eldan (Railway serveri AQShda) ochilmasa ishlatiladi.
-# Bu rasmiy emas, taxminiy bozor kursi.
-FALLBACK_URL = "https://open.er-api.com/v6/latest/USD"
-
-CBU_TIMEOUT = 6            # soniya
-CBU_RETRY_AFTER = 600      # cbu.uz ochilmasa, 10 daqiqa urinib ko'rmaymiz
+CBU_TIMEOUT = 12           # soniya
+CBU_RETRY_AFTER = 120      # cbu.uz ochilmasa, 2 daqiqa urinib ko'rmaymiz
 CACHE_TTL = 1800           # kursni 30 daqiqa eslab qolamiz
 _cbu_down_until = 0.0
 _cache: dict[str, tuple[float, dict]] = {}
@@ -85,7 +81,6 @@ async def _fetch_cbu(session: aiohttp.ClientSession, code: str) -> dict | None:
             "rate": _num(item["Rate"]),
             "diff": _num(item.get("Diff", 0)),
             "date": item.get("Date", ""),
-            "approx": False,
         }
     except Exception as e:
         logger.warning("CBU kurs API xatolik (%s): %s %s", code, type(e).__name__, e)
@@ -93,36 +88,12 @@ async def _fetch_cbu(session: aiohttp.ClientSession, code: str) -> dict | None:
         return None
 
 
-async def _fetch_fallback(session: aiohttp.ClientSession, code: str) -> dict | None:
-    """Zaxira: open.er-api.com (1 USD ga nisbatan kurslar) orqali so'mdagi kursni hisoblaydi."""
-    try:
-        async with session.get(FALLBACK_URL, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status != 200:
-                logger.warning("Zaxira kurs API javobi: HTTP %s", resp.status)
-                return None
-            data = await resp.json(content_type=None)
-        rates = data["rates"]
-        uzs_per_usd = float(rates["UZS"])
-        per_usd = 1.0 if code == "USD" else float(rates[code])
-        return {
-            "code": code,
-            "nominal": "1",
-            "rate": uzs_per_usd / per_usd,
-            "diff": None,
-            "date": uz_now().strftime("%d.%m.%Y"),
-            "approx": True,
-        }
-    except Exception as e:
-        logger.warning("Zaxira kurs API xatolik (%s): %s %s", code, type(e).__name__, e)
-        return None
-
-
 async def fetch_rate(session: aiohttp.ClientSession, code: str = "USD") -> dict | None:
-    """Avval Markaziy bankdan, ochilmasa zaxira manbadan kursni oladi. Ikkalasi ham xato bo'lsa None."""
+    """Markaziy bankning rasmiy kursini oladi. Sayt ochilmasa None (taxminiy kurs berilmaydi)."""
     cached = _cache.get(code)
     if cached and time.monotonic() - cached[0] < CACHE_TTL:
         return cached[1]
-    info = await _fetch_cbu(session, code) or await _fetch_fallback(session, code)
+    info = await _fetch_cbu(session, code)
     if info:
         _cache[code] = (time.monotonic(), info)
     return info
@@ -138,7 +109,6 @@ def format_rate(info: dict, lang: str = "uz") -> str:
     emoji, name_uz, name_ru, _ = CURRENCIES.get(code, ("💱", code, code, ()))
     diff = info.get("diff")
     nominal = info.get("nominal", "1")
-    approx = info.get("approx", False)
     if diff is None:
         diff_line = ""
     else:
@@ -152,8 +122,7 @@ def format_rate(info: dict, lang: str = "uz") -> str:
             f"{diff_line}"
             f"📅 Дата: {info['date']}"
         )
-        text += ("\n\nℹ️ <i>Сайт ЦБ сейчас недоступен — приблизительный рыночный курс.</i>" if approx
-                 else "\n<i>Источник: ЦБ Узбекистана</i>")
+        text += "\n<i>Источник: ЦБ Узбекистана</i>"
     else:
         text = (
             f"{emoji} <b>{name_uz} kursi</b>\n\n"
@@ -161,10 +130,26 @@ def format_rate(info: dict, lang: str = "uz") -> str:
             f"{diff_line}"
             f"📅 Sana: {info['date']}"
         )
-        text += ("\n\nℹ️ <i>Markaziy bank sayti hozir ochilmadi — taxminiy bozor kursi.</i>" if approx
-                 else "\n<i>Manba: O'zR Markaziy banki</i>")
+        text += "\n<i>Manba: O'zR Markaziy banki</i>"
     return text
 
 
 def format_usd_rate(info: dict, lang: str = "uz") -> str:
     return format_rate(info, lang)
+
+
+async def selfcheck(session: aiohttp.ClientSession):
+    """Ishga tushganda cbu.uz ga bir necha yo'l bilan ulanib ko'radi va natijani logga yozadi."""
+    urls = [
+        "https://cbu.uz/uz/arkhiv-kursov-valyut/json/USD/",
+        "https://cbu.uz/ru/arkhiv-kursov-valyut/json/USD/",
+        "http://cbu.uz/uz/arkhiv-kursov-valyut/json/USD/",
+    ]
+    for url in urls:
+        t0 = time.monotonic()
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                body = await resp.read()
+                logger.info("CBU tekshiruv: %s -> HTTP %s, %s bayt, %.1f s", url, resp.status, len(body), time.monotonic() - t0)
+        except Exception as e:
+            logger.warning("CBU tekshiruv: %s -> %s %s (%.1f s)", url, type(e).__name__, e, time.monotonic() - t0)
