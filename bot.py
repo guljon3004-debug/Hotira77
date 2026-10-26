@@ -58,7 +58,7 @@ from database import (
     get_state,
     set_state
 )
-from rates_service import fetch_usd_rate, format_usd_rate, uz_now
+from rates_service import fetch_usd_rate, fetch_rate, format_usd_rate, format_rate, detect_rate_request, uz_now
 from reminder_helper import parse_reminder_time, format_datetime
 from keyboards import (
     get_main_keyboard,
@@ -1095,6 +1095,7 @@ async def handle_voice_message(message: types.Message):
 @dp.message(F.text)
 async def handle_text_messages(message: types.Message):
     """Barcha matnli xabarlar: Eslatma kiritish yoki to'g'ridan-to'g'ri Gemini AI suhbat."""
+    global http_session
     if not await is_authorized(message):
         return
 
@@ -1149,10 +1150,21 @@ async def handle_text_messages(message: types.Message):
         await message.answer(f"⏰ <b>Aqlli Eslatma qabul qilindi!</b>\n\n{confirm_text}", parse_mode="HTML", reply_markup=get_main_keyboard(lang))
         return
 
+    # 3.5. Valyuta kursi so'ralsa (masalan "dollar kursi"), AI ga emas, Markaziy bank ma'lumotiga murojaat qilamiz
+    rate_codes = detect_rate_request(text)
+    if rate_codes:
+        if not http_session or http_session.closed:
+            http_session = aiohttp.ClientSession()
+        infos = [i for i in [await fetch_rate(http_session, c) for c in rate_codes] if i]
+        if infos:
+            await message.answer("\n\n".join(format_rate(i, lang) for i in infos), parse_mode="HTML",
+                                 reply_markup=get_rate_kb(user_id, lang))
+            return
+        # Markaziy bank javob bermasa, AI ga o'tib ketamiz (u hech bo'lmasa tushuntirib beradi)
+
     # 4. Doimiy Gemini AI Chat
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
 
-    global http_session
     if not http_session or http_session.closed:
         http_session = aiohttp.ClientSession()
 
