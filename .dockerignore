@@ -1,0 +1,12 @@
+.git
+.env
+*.env
+*.db
+storage/
+downloads/
+__pycache__/
+*.log
+venv/
+.venv/
+*.bat
+*.vbs
