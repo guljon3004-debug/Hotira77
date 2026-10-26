@@ -1068,6 +1068,7 @@ async def handle_text_messages(message: types.Message):
 async def main():
     """Botni to'liq ishga tushirish funksiyasi."""
     global http_session
+    init_db()
     http_session = aiohttp.ClientSession()
 
     # Bot menyusiga buyruqlarni o'rnatish
