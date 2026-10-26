@@ -50,15 +50,8 @@ from database import (
     is_voice_enabled,
     set_voice_enabled,
     is_user_authorized,
-    log_security_incident,
-    is_rate_subscribed,
-    set_rate_subscribed,
-    ensure_rate_subscribed_default,
-    get_rate_subscribers,
-    get_state,
-    set_state
+    log_security_incident
 )
-from rates_service import fetch_usd_rate, fetch_rate, format_usd_rate, format_rate, detect_rate_request, uz_now
 from reminder_helper import parse_reminder_time, format_datetime
 from keyboards import (
     get_main_keyboard,
@@ -207,93 +200,6 @@ async def reminders_worker():
             logger.error("Reminders worker xatosi: %s", e)
 
         await asyncio.sleep(15)
-
-
-# ==========================================
-# 💵 KUNLIK VALYUTA KURSI (USD, har kuni 08:00 Toshkent vaqti)
-# ==========================================
-
-RATE_SEND_HOUR = 8       # soat 08:00 da yuboriladi
-RATE_CATCHUP_UNTIL = 12  # bot 08:00 da o'chiq bo'lsa, 12:00 gacha kechikib yuboriladi
-
-
-def get_rate_kb(user_id: int, lang: str = "uz") -> InlineKeyboardMarkup:
-    on = is_rate_subscribed(user_id)
-    if lang == "ru":
-        text = "🔕 Отключить ежедневную отправку" if on else "🔔 Включить ежедневно в 08:00"
-    else:
-        text = "🔕 Har kungi xabarni o'chirish" if on else "🔔 Har kuni 08:00 da yuborish"
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=text, callback_data="rate_toggle")]])
-
-
-@dp.message(Command("kurs"))
-async def cmd_rate(message: types.Message):
-    """Hozirgi dollar kursini ko'rsatadi va kunlik xabarni yoqish/o'chirish tugmasini beradi."""
-    if not await is_authorized(message):
-        return
-    user_id = message.from_user.id
-    lang = get_user_lang(user_id)
-
-    global http_session
-    if not http_session or http_session.closed:
-        http_session = aiohttp.ClientSession()
-
-    info = await fetch_usd_rate(http_session)
-    if not info:
-        await message.answer("⚠️ Kursni hozircha olib bo'lmadi. Birozdan keyin qayta urinib ko'ring." if lang != "ru"
-                             else "⚠️ Не удалось получить курс. Попробуйте позже.")
-        return
-    await message.answer(format_usd_rate(info, lang), parse_mode="HTML", reply_markup=get_rate_kb(user_id, lang))
-
-
-@dp.callback_query(F.data == "rate_toggle")
-async def rate_toggle(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    lang = get_user_lang(user_id)
-    new_state = not is_rate_subscribed(user_id)
-    set_rate_subscribed(user_id, new_state)
-    if lang == "ru":
-        note = "Ежедневная отправка включена (08:00)" if new_state else "Ежедневная отправка отключена"
-    else:
-        note = "Har kuni 08:00 da yuboriladi" if new_state else "Kunlik xabar o'chirildi"
-    await callback.answer(note)
-    try:
-        await callback.message.edit_reply_markup(reply_markup=get_rate_kb(user_id, lang))
-    except TelegramBadRequest:
-        pass
-
-
-async def rates_worker():
-    """Har kuni 08:00 (Toshkent) da obunachilarga USD kursini matn ko'rinishida yuboradi."""
-    logger.info("Kunlik valyuta kursi fon xizmati ishga tushdi.")
-    while True:
-        try:
-            now = uz_now()
-            today = now.strftime("%Y-%m-%d")
-            if RATE_SEND_HOUR <= now.hour < RATE_CATCHUP_UNTIL and get_state("rate_last_sent") != today:
-                global http_session
-                if not http_session or http_session.closed:
-                    http_session = aiohttp.ClientSession()
-                info = await fetch_usd_rate(http_session)
-                if info:
-                    # Avval belgilaymiz: yuborish paytida qayta ishga tushsa ham takror ketmasin
-                    set_state("rate_last_sent", today)
-                    sent = 0
-                    for u_id in get_rate_subscribers():
-                        try:
-                            await bot.send_message(u_id, format_usd_rate(info, get_user_lang(u_id)), parse_mode="HTML")
-                            sent += 1
-                        except Exception as send_err:
-                            logger.warning("Kursni yuborishda xatolik (user %s): %s", u_id, send_err)
-                        await asyncio.sleep(0.05)
-                    logger.info("Kunlik USD kursi yuborildi: %s ta foydalanuvchiga", sent)
-                else:
-                    logger.warning("USD kursini olib bo'lmadi, 5 daqiqadan keyin qayta uriniladi.")
-                    await asyncio.sleep(300)
-                    continue
-        except Exception as e:
-            logger.error("Rates worker xatosi: %s", e)
-        await asyncio.sleep(30)
 
 
 # ==========================================
@@ -1095,7 +1001,6 @@ async def handle_voice_message(message: types.Message):
 @dp.message(F.text)
 async def handle_text_messages(message: types.Message):
     """Barcha matnli xabarlar: Eslatma kiritish yoki to'g'ridan-to'g'ri Gemini AI suhbat."""
-    global http_session
     if not await is_authorized(message):
         return
 
@@ -1150,21 +1055,10 @@ async def handle_text_messages(message: types.Message):
         await message.answer(f"⏰ <b>Aqlli Eslatma qabul qilindi!</b>\n\n{confirm_text}", parse_mode="HTML", reply_markup=get_main_keyboard(lang))
         return
 
-    # 3.5. Valyuta kursi so'ralsa (masalan "dollar kursi"), AI ga emas, Markaziy bank ma'lumotiga murojaat qilamiz
-    rate_codes = detect_rate_request(text)
-    if rate_codes:
-        if not http_session or http_session.closed:
-            http_session = aiohttp.ClientSession()
-        infos = [i for i in [await fetch_rate(http_session, c) for c in rate_codes] if i]
-        if infos:
-            await message.answer("\n\n".join(format_rate(i, lang) for i in infos), parse_mode="HTML",
-                                 reply_markup=get_rate_kb(user_id, lang))
-            return
-        # Markaziy bank javob bermasa, AI ga o'tib ketamiz (u hech bo'lmasa tushuntirib beradi)
-
     # 4. Doimiy Gemini AI Chat
     await bot.send_chat_action(chat_id=user_id, action=ChatAction.TYPING)
 
+    global http_session
     if not http_session or http_session.closed:
         http_session = aiohttp.ClientSession()
 
@@ -1193,18 +1087,12 @@ async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Botni qayta ishga tushirish"),
         BotCommand(command="qayerdaman", description="Hozirgi ko'changizni bilish (Radar)"),
-        BotCommand(command="kurs", description="Dollar kursi va har kungi xabar"),
         BotCommand(command="voice", description="Ovozli ogohlantirishni yoqish/o'chirish"),
         BotCommand(command="settings", description="Sozlamalar va til")
     ])
 
     # Fon rejimida eslatmalar tekshiruvchisini ishga tushirish
     asyncio.create_task(reminders_worker())
-
-    # Bot egasi kunlik kursga avtomatik obuna bo'ladi (xohlasa /kurs orqali o'chiradi)
-    if str(ADMIN_ID or "").strip().isdigit():
-        ensure_rate_subscribed_default(int(ADMIN_ID))
-    asyncio.create_task(rates_worker())
 
     logger.info("Hotira77 boti muvaffaqiyatli ishga tushdi (@Hotira77_bot). Xabarlar kutilmoqda...")
 
