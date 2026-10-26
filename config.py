@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 from dotenv import load_dotenv
 
@@ -20,6 +20,9 @@ CHANNEL_URL = os.getenv("CHANNEL_URL", "").strip()
 
 # Bot egasi / Admin ID si
 ADMIN_ID = os.getenv("ADMIN_ID", "1722855035").strip()
+
+# Ommaviy rejim (True bo'lsa barcha foydalanuvchilar kira oladi, False bo'lsa faqat Admin)
+PUBLIC_MODE = os.getenv("PUBLIC_MODE", "true").lower() in ("true", "1", "yes")
 
 # Wi-Fi avtomatik belgilash uchun mahalliy server porti
 WIFI_PORT = int(os.getenv("WIFI_PORT", "8088"))
@@ -46,3 +49,4 @@ def validate_config():
         print("olingan tokenni BOT_TOKEN=... qatoriga yozing.", flush=True)
         print("=" * 60 + "\n", flush=True)
         sys.exit(1)
+

@@ -28,6 +28,7 @@ from aiogram.exceptions import TelegramBadRequest
 from config import (
     BOT_TOKEN,
     ADMIN_ID,
+    PUBLIC_MODE,
     DOWNLOADS_DIR,
     validate_config
 )
@@ -123,6 +124,10 @@ async def is_authorized(event: types.Message | types.CallbackQuery) -> bool:
     if not user:
         return False
     user_id = user.id
+
+    # Ommaviy (Public) rejim: barcha foydalanuvchilar botdan to'liq foydalana oladi
+    if PUBLIC_MODE:
+        return True
 
     admin_str = str(ADMIN_ID or "").strip()
     if admin_str and admin_str != "0":
