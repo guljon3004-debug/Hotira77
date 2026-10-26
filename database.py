@@ -132,6 +132,20 @@ def init_db():
         )
         """)
 
+        # Kunlik valyuta kursi obunachilari va oddiy holat jadvali
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rate_subscribers (
+            user_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 1
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bot_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """)
+
         # Indekslar
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_work_user_date ON work_attendance(user_id, work_date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_docs_user ON documents(user_id)")
@@ -737,3 +751,52 @@ def get_security_incident_count() -> int:
         return row["cnt"] if row else 0
 
 
+
+
+# ==========================================
+# KUNLIK VALYUTA KURSI (OBUNA)
+# ==========================================
+
+def is_rate_subscribed(user_id: int) -> bool:
+    with get_connection() as conn:
+        row = conn.execute("SELECT enabled FROM rate_subscribers WHERE user_id = ?", (user_id,)).fetchone()
+        return bool(row and row["enabled"])
+
+
+def set_rate_subscribed(user_id: int, enabled: bool):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO rate_subscribers (user_id, enabled) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET enabled = excluded.enabled",
+            (user_id, 1 if enabled else 0),
+        )
+        conn.commit()
+
+
+def ensure_rate_subscribed_default(user_id: int):
+    """Foydalanuvchi hali tanlamagan bo'lsa, uni obunachi qiladi (mavjud tanlovni buzmaydi)."""
+    with get_connection() as conn:
+        conn.execute("INSERT OR IGNORE INTO rate_subscribers (user_id, enabled) VALUES (?, 1)", (user_id,))
+        conn.commit()
+
+
+def get_rate_subscribers() -> list[int]:
+    with get_connection() as conn:
+        rows = conn.execute("SELECT user_id FROM rate_subscribers WHERE enabled = 1").fetchall()
+        return [r["user_id"] for r in rows]
+
+
+def get_state(key: str) -> str | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM bot_state WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+def set_state(key: str, value: str):
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT INTO bot_state (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        conn.commit()
