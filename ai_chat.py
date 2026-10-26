@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import aiohttp
+from datetime import datetime, timedelta, timezone
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,21 @@ SYSTEM_PROMPT = (
 )
 
 
+# O'zbekiston vaqti (UTC+5, yozgi/qishki vaqtga o'tish yo'q)
+UZ_TZ = timezone(timedelta(hours=5))
+UZ_WEEKDAYS = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"]
+UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"]
+
+
+def current_datetime_text() -> str:
+    """Hozirgi sana va vaqtni (Toshkent) AI ga berish uchun matn ko'rinishida qaytaradi."""
+    now = datetime.now(UZ_TZ)
+    return (
+        f"{now.year}-yil {now.day}-{UZ_MONTHS[now.month - 1]}, {UZ_WEEKDAYS[now.weekday()]}, "
+        f"soat {now.strftime('%H:%M')} (Toshkent vaqti)"
+    )
+
+
 class GeminiChatService:
     """Google Gemini REST API orqali asinxron muloqot qiluvchi xizmat."""
     def get_system_prompt(self, location_info: dict | None = None) -> str:
@@ -21,6 +37,9 @@ class GeminiChatService:
             "Siz aqlli, juda tezkor, xushmuomala va do'stona AI assistantsiz (Google Gemini modeli asosida). "
             "Foydalanuvchilarga doimo tushunarli, aniq, qisqa va foydali javob bering. "
             "O'zbek tilida ravon gapiring. "
+            f"\n[HOZIRGI SANA VA VAQT: {current_datetime_text()}. "
+            "Sana, hafta kuni yoki vaqt haqida savol berilsa, faqat shu ma'lumotga tayanib javob bering, "
+            "o'zingizcha taxmin qilmang. 'Ertaga', 'kecha', 'bu hafta' kabi so'zlarni ham shundan hisoblang.] "
         )
         if location_info:
             road = location_info.get("road") or "aniqlanmoqda"
