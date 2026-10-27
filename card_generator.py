@@ -16,7 +16,10 @@ def get_font(size: int, bold: bool = False):
     font_names = [
         "seguisb.ttf" if bold else "segoeui.ttf",
         "arialbd.ttf" if bold else "arial.ttf",
-        "calibrib.ttf" if bold else "calibri.ttf"
+        "calibrib.ttf" if bold else "calibri.ttf",
+        # Linux (Docker / Railway) shriftlari
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     ]
     for fn in font_names:
         try:
