@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-# DATA_DIR - doimiy ma'lumotlar papkasi (Railway'da volume ulangan joy, masalan /data)
+# DATA_DIR berilsa (masalan Railway volume: /data) baza o'sha yerda saqlanadi
 DATA_DIR = os.getenv("DATA_DIR", os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "vault.db")

@@ -1,7 +1,9 @@
 import os
 import asyncio
+import time
 import logging
 import aiohttp
+from datetime import datetime, timedelta, timezone
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,24 @@ SYSTEM_PROMPT = (
 )
 
 
+ATTEMPT_TIMEOUT = 20   # bitta modelni kutish (soniya)
+MODEL_COOLDOWN = 300   # band chiqqan modelni shuncha soniya oxirga suramiz
+
+# O'zbekiston vaqti (UTC+5, yozgi/qishki vaqtga o'tish yo'q)
+UZ_TZ = timezone(timedelta(hours=5))
+UZ_WEEKDAYS = ["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"]
+UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"]
+
+
+def current_datetime_text() -> str:
+    """Hozirgi sana va vaqtni (Toshkent) AI ga berish uchun matn ko'rinishida qaytaradi."""
+    now = datetime.now(UZ_TZ)
+    return (
+        f"{now.year}-yil {now.day}-{UZ_MONTHS[now.month - 1]}, {UZ_WEEKDAYS[now.weekday()]}, "
+        f"soat {now.strftime('%H:%M')} (Toshkent vaqti)"
+    )
+
+
 class GeminiChatService:
     """Google Gemini REST API orqali asinxron muloqot qiluvchi xizmat."""
     def get_system_prompt(self, location_info: dict | None = None) -> str:
@@ -21,6 +41,9 @@ class GeminiChatService:
             "Siz aqlli, juda tezkor, xushmuomala va do'stona AI assistantsiz (Google Gemini modeli asosida). "
             "Foydalanuvchilarga doimo tushunarli, aniq, qisqa va foydali javob bering. "
             "O'zbek tilida ravon gapiring. "
+            f"\n[HOZIRGI SANA VA VAQT: {current_datetime_text()}. "
+            "Sana, hafta kuni yoki vaqt haqida savol berilsa, faqat shu ma'lumotga tayanib javob bering, "
+            "o'zingizcha taxmin qilmang. 'Ertaga', 'kecha', 'bu hafta' kabi so'zlarni ham shundan hisoblang.] "
         )
         if location_info:
             road = location_info.get("road") or "aniqlanmoqda"
@@ -47,6 +70,8 @@ class GeminiChatService:
         # Tarixda saqlanadigan maksimal xabarlar soni
         self.max_history_turns = 10
         self.fallback_models = ["gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-flash-latest"]
+        # model -> shu vaqtgacha (time.monotonic) band deb hisoblanadi
+        self._bad_until: dict[str, float] = {}
 
     def is_configured(self) -> bool:
         """API kaliti sozlanganligini tekshiradi."""
@@ -61,6 +86,48 @@ class GeminiChatService:
     def get_model(self) -> str:
         """Joriy model nomini qaytaradi."""
         return (self.model or os.getenv("GEMINI_MODEL", "gemini-flash-latest")).strip()
+
+    async def _generate(self, session: aiohttp.ClientSession, payload: dict, total_timeout: int) -> tuple[int, dict]:
+        """
+        Gemini'ga so'rov yuboradi. Model band bo'lsa (429/500/503/504 yoki timeout)
+        zaxira modellarga o'tadi. Band chiqqan model 5 daqiqa oxiriga suriladi, shunda har
+        so'rovda band modelga vaqt yo'qotilmaydi. (status, javob) qaytaradi.
+        """
+        api_key = self.get_api_key()
+        models = []
+        for m in [self.get_model(), *self.fallback_models]:
+            if m and m not in models:
+                models.append(m)
+        now = time.monotonic()
+        # Yaqinda band chiqqan modellar oxirga (tartib saqlanadi)
+        models.sort(key=lambda m: self._bad_until.get(m, 0) > now)
+
+        deadline = now + total_timeout
+        status, data = 0, {}
+        for i, model in enumerate(models):
+            remaining = deadline - time.monotonic()
+            if remaining <= 1 and i > 0:
+                break
+            # Bitta urinish uzog'i bilan 20 soniya: band modelni uzoq kutmaymiz
+            attempt_timeout = max(2, min(ATTEMPT_TIMEOUT, remaining))
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            t0 = time.monotonic()
+            try:
+                timeout = aiohttp.ClientTimeout(total=attempt_timeout)
+                async with session.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout) as resp:
+                    status = resp.status
+                    data = await resp.json(content_type=None)
+            except asyncio.TimeoutError:
+                status, data = 504, {"error": {"message": "Timeout"}}
+            except aiohttp.ClientConnectorError:
+                raise
+
+            if status not in (429, 500, 503, 504) and not (status == 404 and i > 0):
+                logger.info("Gemini [%s]: HTTP %s, %.1f s", model, status, time.monotonic() - t0)
+                return status, data
+            self._bad_until[model] = time.monotonic() + MODEL_COOLDOWN
+            logger.warning("Gemini [%s] band (%s, %.1f s), keyingi modelga o'tilmoqda...", model, status, time.monotonic() - t0)
+        return status, data
 
     def clear_history(self, user_id: int):
         """Foydalanuvchi suhbat tarixini tozalash."""
@@ -84,8 +151,6 @@ class GeminiChatService:
                 "<a href=\"https://aistudio.google.com/app/apikey\">https://aistudio.google.com/app/apikey</a> saytiga kiring."
             )
 
-        model = self.get_model()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
         # Foydalanuvchi tarixini olamiz yoki yangi boshlaymiz
         history = self.user_histories.get(user_id, [])
@@ -106,60 +171,56 @@ class GeminiChatService:
             }
         }
 
-        headers = {
-            "Content-Type": "application/json"
-        }
-
         try:
-            timeout = aiohttp.ClientTimeout(total=45)
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                data = await resp.json()
+            status, data = await self._generate(session, payload, 45)
 
-                if resp.status == 200:
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        candidate = candidates[0]
-                        content = candidate.get("content", {})
-                        parts = content.get("parts", [])
-                        if parts:
-                            reply_text = "".join(p.get("text", "") for p in parts).strip()
+            if status == 200:
+                candidates = data.get("candidates", [])
+                if candidates:
+                    candidate = candidates[0]
+                    content = candidate.get("content", {})
+                    parts = content.get("parts", [])
+                    if parts:
+                        reply_text = "".join(p.get("text", "") for p in parts).strip()
 
-                            # Javobni tarixga qo'shamiz
-                            new_contents.append({
-                                "role": "model",
-                                "parts": [{"text": reply_text}]
-                            })
+                        # Javobni tarixga qo'shamiz
+                        new_contents.append({
+                            "role": "model",
+                            "parts": [{"text": reply_text}]
+                        })
 
-                            # Tarixni maksimal o'lchamda ushlab turamiz
-                            if len(new_contents) > self.max_history_turns:
-                                new_contents = new_contents[-self.max_history_turns:]
+                        # Tarixni maksimal o'lchamda ushlab turamiz
+                        if len(new_contents) > self.max_history_turns:
+                            new_contents = new_contents[-self.max_history_turns:]
 
-                            self.user_histories[user_id] = new_contents
-                            return reply_text
+                        self.user_histories[user_id] = new_contents
+                        return reply_text
 
-                    return "🤔 AI dan bo'sh javob qaytdi. Iltimos, boshqacha savol berib ko'ring."
+                return "🤔 AI dan bo'sh javob qaytdi. Iltimos, boshqacha savol berib ko'ring."
 
-                # Agar xatolik bo'lsa
-                error_info = data.get("error", {})
-                error_msg = error_info.get("message", "Noma'lum xatolik")
-                status_code = resp.status
+            # Agar xatolik bo'lsa
+            error_info = data.get("error", {})
+            error_msg = error_info.get("message", "Noma'lum xatolik")
+            status_code = status
 
-                logger.error(f"Gemini API Error [{status_code}]: {error_msg}")
+            logger.error(f"Gemini API Error [{status_code}]: {error_msg}")
 
-                if status_code == 400:
-                    if "API key not valid" in error_msg or "INVALID_ARGUMENT" in str(error_info):
-                        return (
-                            "❌ <b>Gemini API kaliti yaroqsiz!</b>\n\n"
-                            "Iltimos, <code>.env</code> faylidagi <code>GEMINI_API_KEY</code> to'g'ri kiritilganini tekshiring."
-                        )
-                    return f"❌ <b>So'rovda xatolik:</b>\n{error_msg}"
-                elif status_code == 429:
+            if status_code == 400:
+                if "API key not valid" in error_msg or "INVALID_ARGUMENT" in str(error_info):
                     return (
-                        "⏳ <b>So'rovlar limiti oshdi!</b>\n\n"
-                        "Gemini API bepul tarifi bo'yicha limitga yetildi. Iltimos, birozdan keyin qayta urinib ko'ring."
+                        "❌ <b>Gemini API kaliti yaroqsiz!</b>\n\n"
+                        "Iltimos, <code>.env</code> faylidagi <code>GEMINI_API_KEY</code> to'g'ri kiritilganini tekshiring."
                     )
-                else:
-                    return f"⚠️ <b>Gemini xizmatida xatolik ({status_code}):</b>\n{error_msg}"
+                return f"❌ <b>So'rovda xatolik:</b>\n{error_msg}"
+            elif status_code in (500, 503, 504):
+                return "⏳ <b>Gemini AI hozir juda band.</b>\n\nGoogle serverlariga yuklama oshgan. Iltimos, 1-2 daqiqadan keyin qayta urinib ko'ring."
+            elif status_code == 429:
+                return (
+                    "⏳ <b>So'rovlar limiti oshdi!</b>\n\n"
+                    "Gemini API bepul tarifi bo'yicha limitga yetildi. Iltimos, birozdan keyin qayta urinib ko'ring."
+                )
+            else:
+                return f"⚠️ <b>Gemini xizmatida xatolik ({status_code}):</b>\n{error_msg}"
 
         except aiohttp.ClientConnectorError:
             return "📡 <b>Internet yoki tarmoqqa ulanishda muammo bo'ldi.</b> Iltimos, internetingizni tekshiring."
@@ -175,7 +236,6 @@ class GeminiChatService:
         """
         import base64
 
-        api_key = self.get_api_key()
         if not self.is_configured():
             return (
                 "⚠️ <b>Gemini API kaliti topilmadi!</b>\n\n"
@@ -183,8 +243,6 @@ class GeminiChatService:
                 "<code>GEMINI_API_KEY</code> ni kiriting."
             )
 
-        model = self.get_model()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
         audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
         history = self.user_histories.get(user_id, [])
@@ -221,38 +279,36 @@ class GeminiChatService:
             }
         }
 
-        headers = {"Content-Type": "application/json"}
-
         try:
-            timeout = aiohttp.ClientTimeout(total=60)
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                data = await resp.json()
+            status, data = await self._generate(session, payload, 60)
 
-                if resp.status == 200:
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            reply_text = "".join(p.get("text", "") for p in parts).strip()
+            if status == 200:
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        reply_text = "".join(p.get("text", "") for p in parts).strip()
 
-                            # Javobni tarixga qo'shamiz
-                            new_contents.append({
-                                "role": "model",
-                                "parts": [{"text": reply_text}]
-                            })
+                        # Javobni tarixga qo'shamiz
+                        new_contents.append({
+                            "role": "model",
+                            "parts": [{"text": reply_text}]
+                        })
 
-                            if len(new_contents) > self.max_history_turns:
-                                new_contents = new_contents[-self.max_history_turns:]
+                        if len(new_contents) > self.max_history_turns:
+                            new_contents = new_contents[-self.max_history_turns:]
 
-                            self.user_histories[user_id] = new_contents
-                            return reply_text
+                        self.user_histories[user_id] = new_contents
+                        return reply_text
 
-                    return "Audio xabaringiz eshitildi, ammo javob hosil qilib bo'lmadi. Iltimos, qayta yuboring."
+                return "Audio xabaringiz eshitildi, ammo javob hosil qilib bo'lmadi. Iltimos, qayta yuboring."
 
-                error_info = data.get("error", {})
-                error_msg = error_info.get("message", "Noma'lum xatolik")
-                logger.error(f"Gemini Audio Error [{resp.status}]: {error_msg}")
-                return f"⚠️ <b>Ovozni tahlil qilishda xatolik ({resp.status}):</b> {error_msg}"
+            error_info = data.get("error", {})
+            error_msg = error_info.get("message", "Noma'lum xatolik")
+            logger.error(f"Gemini Audio Error [{status}]: {error_msg}")
+            if status in (500, 503, 504):
+                return "⏳ <b>Gemini AI hozir juda band.</b>\n\nGoogle serverlariga yuklama oshgan. Iltimos, 1-2 daqiqadan keyin qayta urinib ko'ring."
+            return f"⚠️ <b>Ovozni tahlil qilishda xatolik ({status}):</b> {error_msg}"
 
         except Exception as e:
             logger.exception("Gemini audio so'rovida xatolik:")
@@ -272,7 +328,6 @@ class GeminiChatService:
         """
         import base64
 
-        api_key = self.get_api_key()
         if not self.is_configured():
             return (
                 "⚠️ <b>Gemini API kaliti topilmadi!</b>\n\n"
@@ -280,8 +335,6 @@ class GeminiChatService:
                 "<code>GEMINI_API_KEY</code> ni kiriting."
             )
 
-        model = self.get_model()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
         img_b64 = base64.b64encode(image_bytes).decode("utf-8")
         history = self.user_histories.get(user_id, [])
@@ -316,37 +369,35 @@ class GeminiChatService:
             }
         }
 
-        headers = {"Content-Type": "application/json"}
-
         try:
-            timeout = aiohttp.ClientTimeout(total=60)
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                data = await resp.json()
+            status, data = await self._generate(session, payload, 60)
 
-                if resp.status == 200:
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            reply_text = "".join(p.get("text", "") for p in parts).strip()
+            if status == 200:
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        reply_text = "".join(p.get("text", "") for p in parts).strip()
 
-                            new_contents.append({
-                                "role": "model",
-                                "parts": [{"text": reply_text}]
-                            })
+                        new_contents.append({
+                            "role": "model",
+                            "parts": [{"text": reply_text}]
+                        })
 
-                            if len(new_contents) > self.max_history_turns:
-                                new_contents = new_contents[-self.max_history_turns:]
+                        if len(new_contents) > self.max_history_turns:
+                            new_contents = new_contents[-self.max_history_turns:]
 
-                            self.user_histories[user_id] = new_contents
-                            return reply_text
+                        self.user_histories[user_id] = new_contents
+                        return reply_text
 
-                    return "Rasm qabul qilindi, ammo javob hosil qilib bo'lmadi."
+                return "Rasm qabul qilindi, ammo javob hosil qilib bo'lmadi."
 
-                error_info = data.get("error", {})
-                error_msg = error_info.get("message", "Noma'lum xatolik")
-                logger.error(f"Gemini Image Error [{resp.status}]: {error_msg}")
-                return f"⚠️ <b>Rasmni tahlil qilishda xatolik ({resp.status}):</b> {error_msg}"
+            error_info = data.get("error", {})
+            error_msg = error_info.get("message", "Noma'lum xatolik")
+            logger.error(f"Gemini Image Error [{status}]: {error_msg}")
+            if status in (500, 503, 504):
+                return "⏳ <b>Gemini AI hozir juda band.</b>\n\nGoogle serverlariga yuklama oshgan. Iltimos, 1-2 daqiqadan keyin qayta urinib ko'ring."
+            return f"⚠️ <b>Rasmni tahlil qilishda xatolik ({status}):</b> {error_msg}"
 
         except Exception as e:
             logger.exception("Gemini rasm so'rovida xatolik:")

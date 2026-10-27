@@ -351,12 +351,24 @@ async def handle_location_update(message: types.Message):
         http_session = aiohttp.ClientSession()
 
     addr = await resolve_address(lat, lon, http_session)
+    if not addr:
+        # Manzilni aniqlab bo'lmadi: eski holatni buzmaymiz, keyingi yangilanishda qayta uriniladi
+        logger.warning("Joylashuv [user: %s] %.5f, %.5f: manzil aniqlanmadi", user_id, lat, lon)
+        if not prev:
+            await message.answer(
+                "📍 Joylashuvingiz qabul qilindi, lekin ko'cha nomini hozircha aniqlab bo'lmadi. "
+                "Harakatlansangiz, qayta urinib ko'raman.",
+                reply_markup=get_main_keyboard(lang)
+            )
+            update_user_location(user_id, lat, lon, {"road": "", "district": "", "city": ""}, is_live=bool(getattr(loc, 'live_period', None)))
+        return
     old_road = prev.get("road") if prev else None
     new_road = addr.get("road")
     district = addr.get("district") or addr.get("city") or "Toshkent"
     time_str = datetime.now().strftime("%H:%M:%S")
 
     is_live = bool(getattr(loc, 'live_period', None))
+    logger.info("Joylashuv [user: %s, live: %s]: %s (%s -> %s)", user_id, is_live, new_road, old_road, new_road)
 
     # Ko'cha o'zgarishini tekshirish
     if old_road and new_road and old_road.lower() != new_road.lower() and new_road.lower() != "aniqlanmoqda":
@@ -807,7 +819,7 @@ async def handle_incoming_file(message: types.Message):
     if not file_id:
         return
 
-    save_dir = os.path.join(os.getenv("DATA_DIR", ""), "storage", folder)
+    save_dir = os.path.join(os.getenv("DATA_DIR", "."), "storage", folder)
     os.makedirs(save_dir, exist_ok=True)
     local_path = os.path.join(save_dir, f"{uuid.uuid4().hex[:8]}_{file_name}")
 
@@ -946,44 +958,68 @@ async def handle_voice_message(message: types.Message):
     user_id = message.from_user.id
     lang = get_user_lang(user_id)
 
-    await bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
-
     os.makedirs("downloads", exist_ok=True)
     voice_path = os.path.join("downloads", f"voice_{user_id}_{message.voice.file_id[:8]}.ogg")
+
+    # Javob tayyor bo'lguncha "yozmoqda..." belgisini doimiy yangilab turamiz
+    # (Telegram uni 5 soniyadan keyin o'chiradi, foydalanuvchi bot qotib qoldi deb o'ylamasin)
+    async def keep_typing():
+        while True:
+            try:
+                await bot.send_chat_action(chat_id=user_id, action=ChatAction.RECORD_VOICE)
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(keep_typing())
     try:
-        f_info = await bot.get_file(message.voice.file_id)
-        await bot.download_file(f_info.file_path, destination=voice_path)
-        with open(voice_path, "rb") as vf:
-            audio_bytes = vf.read()
-    except Exception as e:
-        logger.error("Ovozli faylni yuklab olishda xatolik: %s", e)
-        await message.answer("Ovozli xabarni qabul qilishda xatolik yuz berdi.")
-        return
+        try:
+            f_info = await bot.get_file(message.voice.file_id)
+            await bot.download_file(f_info.file_path, destination=voice_path)
+            with open(voice_path, "rb") as vf:
+                audio_bytes = vf.read()
+        except Exception as e:
+            logger.error("Ovozli faylni yuklab olishda xatolik: %s", e)
+            await message.answer("Ovozli xabarni qabul qilishda xatolik yuz berdi.")
+            return
+        finally:
+            try:
+                os.remove(voice_path)
+            except OSError:
+                pass
 
-    global http_session
-    if not http_session or http_session.closed:
-        http_session = aiohttp.ClientSession()
+        global http_session
+        if not http_session or http_session.closed:
+            http_session = aiohttp.ClientSession()
 
-    loc_info = get_user_current_location(user_id)
-    ai_answer = await gemini_service.ask_audio(
-        user_id=user_id,
-        audio_bytes=audio_bytes,
-        mime_type="audio/ogg",
-        session=http_session,
-        location_info=loc_info
-    )
-
-    # Javobni ovozli qilib jo'natamiz
-    tts_audio = await generate_voice_message(ai_answer)
-    if tts_audio and os.path.exists(tts_audio):
-        await message.answer_voice(
-            voice=FSInputFile(tts_audio),
-            caption=f"🎙 <i>{ai_answer[:200]}</i>",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard(lang)
+        loc_info = get_user_current_location(user_id)
+        ai_answer = await gemini_service.ask_audio(
+            user_id=user_id,
+            audio_bytes=audio_bytes,
+            mime_type="audio/ogg",
+            session=http_session,
+            location_info=loc_info
         )
-    else:
-        await message.answer(ai_answer, parse_mode="HTML", reply_markup=get_main_keyboard(lang))
+
+        # 1) Matnli javobni DARHOL yuboramiz, ovoz tayyorlanishini kutdirmaymiz
+        try:
+            await message.answer(ai_answer, parse_mode="HTML", reply_markup=get_main_keyboard(lang))
+        except TelegramBadRequest:
+            # AI matnida HTML ga to'g'ri kelmaydigan belgi bo'lsa, oddiy matn qilib yuboramiz
+            await message.answer(ai_answer, parse_mode=None, reply_markup=get_main_keyboard(lang))
+
+        # 2) Ovozli variantini tayyorlab, ortidan yuboramiz
+        tts_audio = await generate_voice_message(ai_answer)
+        if tts_audio and os.path.exists(tts_audio):
+            try:
+                await message.answer_voice(voice=FSInputFile(tts_audio))
+            finally:
+                try:
+                    os.remove(tts_audio)
+                except OSError:
+                    pass
+    finally:
+        typing_task.cancel()
 
 
 @dp.message(F.text)
@@ -1068,6 +1104,7 @@ async def handle_text_messages(message: types.Message):
 async def main():
     """Botni to'liq ishga tushirish funksiyasi."""
     global http_session
+    init_db()
     http_session = aiohttp.ClientSession()
 
     # Bot menyusiga buyruqlarni o'rnatish
@@ -1097,5 +1134,3 @@ if __name__ == "__main__":
         logger.info("Bot to'xtatildi.")
     except Exception as e:
         logger.exception("BOT KUTILMAGAN XATOLIK BILAN TO'XTADI:")
-        # Xatolik kodi bilan chiqamiz, shunda Railway botni qayta ishga tushiradi
-        sys.exit(1)

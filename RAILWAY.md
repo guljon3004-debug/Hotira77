@@ -1,6 +1,6 @@
 # Railway'da 24/7 ishga tushirish
 
-1. https://railway.com ga GitHub orqali kiring → **New Project** → **Deploy from GitHub repo** → `Hotira77` ni tanlang.
+1. https://railway.com ga GitHub orqali kiring → **New Project** → **Deploy from GitHub repo** → `Hotira77` ni tanlang (sozlamalar `railway.json` da tayyor).
 2. Servis ichida **Variables** bo'limiga quyidagilarni qo'shing (tokenlarni hech qachon git'ga yozmang):
    - `BOT_TOKEN` — @BotFather tokeni
    - `ADMIN_ID` — sizning Telegram ID

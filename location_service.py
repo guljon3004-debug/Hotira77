@@ -26,77 +26,89 @@ def calculate_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float
     return R * c
 
 
-async def resolve_address(lat: float, lon: float, session: aiohttp.ClientSession) -> dict:
+async def _nominatim(lat: float, lon: float, session: aiohttp.ClientSession) -> dict | None:
+    """Nominatim (OpenStreetMap) orqali manzil. Xatolik bo'lsa None."""
+    url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=18&addressdetails=1"
+    headers = {"User-Agent": "Hotira77Bot/1.0 (https://t.me/Hotira77_bot)"}
+    try:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status != 200:
+                logger.warning("Nominatim javobi: HTTP %s", resp.status)
+                return None
+            data = await resp.json(content_type=None)
+    except Exception as e:
+        logger.warning("Nominatim xatolik: %s", e)
+        return None
+
+    addr = data.get("address", {})
+    display_name = data.get("display_name", "")
+    road = (
+        addr.get("road") or addr.get("pedestrian") or addr.get("footway") or addr.get("path") or
+        addr.get("neighbourhood") or addr.get("residential") or addr.get("quarter") or
+        addr.get("suburb") or addr.get("amenity") or addr.get("building") or ""
+    )
+    if not road and display_name:
+        road = display_name.split(",")[0].strip()
+    if not road:
+        return None
+    return {
+        "road": road,
+        "house": addr.get("house_number") or "",
+        "district": addr.get("district") or addr.get("city_district") or addr.get("suburb") or addr.get("county") or "Toshkent",
+        "city": addr.get("city") or addr.get("town") or addr.get("village") or addr.get("state") or "Toshkent",
+        "display_name": display_name,
+    }
+
+
+async def _photon(lat: float, lon: float, session: aiohttp.ClientSession) -> dict | None:
+    """Zaxira: Photon (OpenStreetMap asosida). Xatolik bo'lsa None."""
+    url = f"https://photon.komoot.io/reverse?lat={lat}&lon={lon}&lang=en"
+    try:
+        async with session.get(url, headers={"User-Agent": "Hotira77Bot/1.0"}, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+            if resp.status != 200:
+                logger.warning("Photon javobi: HTTP %s", resp.status)
+                return None
+            data = await resp.json(content_type=None)
+    except Exception as e:
+        logger.warning("Photon xatolik: %s", e)
+        return None
+
+    features = data.get("features") or []
+    if not features:
+        return None
+    p = features[0].get("properties", {})
+    road = p.get("street") or p.get("name") or p.get("locality") or p.get("district") or ""
+    if not road:
+        return None
+    district = p.get("district") or p.get("county") or "Toshkent"
+    city = p.get("city") or p.get("state") or "Toshkent"
+    return {
+        "road": road,
+        "house": p.get("housenumber") or "",
+        "district": district,
+        "city": city,
+        "display_name": ", ".join(x for x in (road, district, city) if x),
+    }
+
+
+async def resolve_address(lat: float, lon: float, session: aiohttp.ClientSession) -> dict | None:
     """
-    GPS koordinatalarini ko'cha va tuman nomiga aylantiradi (Nominatim OpenStreetMap).
-    O'zbekiston/Tashkent hududlaridagi mahalla, xiyobon va ko'chalarni to'liq aniqlaydi.
+    GPS koordinatalarini ko'cha va tuman nomiga aylantiradi.
+    Avval Nominatim, ishlamasa Photon sinab ko'riladi. Ikkalasi ham xato bersa None qaytaradi
+    (soxta "Noma'lum ko'cha" yaratilmaydi, shunda yolg'on ogohlantirish chiqmaydi).
     """
     cache_key = (round(lat, 4), round(lon, 4))
     if cache_key in address_cache:
         return address_cache[cache_key]
 
-    url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=18&addressdetails=1"
-    headers = {"User-Agent": "SmartOfficeAssistantBot/3.0"}
-
-    try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                addr = data.get("address", {})
-
-                # Ko'cha nomini barcha ehtimoliy maydonlardan qidiramiz
-                road = (
-                    addr.get("road") or
-                    addr.get("pedestrian") or
-                    addr.get("footway") or
-                    addr.get("path") or
-                    addr.get("neighbourhood") or
-                    addr.get("residential") or
-                    addr.get("quarter") or
-                    addr.get("suburb") or
-                    addr.get("amenity") or
-                    addr.get("building") or
-                    ""
-                )
-
-                display_name = data.get("display_name", "")
-                if not road and display_name:
-                    parts = [p.strip() for p in display_name.split(",")]
-                    if parts:
-                        road = parts[0]
-
-                if not road:
-                    road = "Ko'cha aniqlanmoqda"
-
-                house = addr.get("house_number") or ""
-                district = (
-                    addr.get("district") or
-                    addr.get("city_district") or
-                    addr.get("suburb") or
-                    addr.get("county") or
-                    "Toshkent"
-                )
-                city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("state") or "Toshkent"
-
-                result = {
-                    "road": road,
-                    "house": house,
-                    "district": district,
-                    "city": city,
-                    "display_name": display_name
-                }
-                address_cache[cache_key] = result
-                return result
-    except Exception as e:
-        logger.warning("Manzilni aniqlashda xatolik: %s", e)
-
-    return {
-        "road": "Noma'lum ko'cha",
-        "house": "",
-        "district": "Toshkent",
-        "city": "Toshkent",
-        "display_name": f"{lat:.5f}, {lon:.5f}"
-    }
+    result = await _nominatim(lat, lon, session) or await _photon(lat, lon, session)
+    if result:
+        address_cache[cache_key] = result
+        if len(address_cache) > 2000:
+            address_cache.pop(next(iter(address_cache)))
+    else:
+        logger.error("Manzilni aniqlab bo'lmadi: %.5f, %.5f", lat, lon)
+    return result
 
 
 def update_user_location(user_id: int, lat: float, lon: float, address_info: dict, is_live: bool = False):
